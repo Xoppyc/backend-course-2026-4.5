@@ -15,6 +15,15 @@ try {
   console.error(e.message);
   process.exit(1);
 }
+const required = ['input', 'host', 'port'];
+const missing = required.filter((arg) => !values[arg]);
+
+if (missing.length > 0) {
+  console.error(
+    `Missing required arguments: ${missing.map((m) => `--${m}`).join(', ')}`,
+  );
+  process.exit(1);
+}
 async function processToXml() {
   try {
     const rawData = await fs.readFile(values.input, 'utf-8');
