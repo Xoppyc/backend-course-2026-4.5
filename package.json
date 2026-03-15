@@ -1,0 +1,8 @@
+{
+  "name": "laba_3",
+  "type": "module",
+  "dependencies": {
+    "fast-xml-parser": "^5.5.5",
+    "fs": "^0.0.1-security"
+  }
+}
