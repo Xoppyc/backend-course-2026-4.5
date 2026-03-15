@@ -1,5 +1,7 @@
-import fs from 'fs';
+import fs from 'node:fs/promises';
+import http from 'node:http';
 import { parseArgs } from 'node:util';
+import { XMLBuilder } from 'fast-xml-parser';
 
 const options = {
   input: { type: 'string', short: 'i' },
@@ -9,73 +11,79 @@ const options = {
 };
 
 let values;
-
 try {
-  // If parseArgs fails here, values remains undefined
-  ({ values } = parseArgs({ options }));
-} catch (error) {
-  // This catches syntax errors like passing an undefined flag (e.g., --foo)
-  console.error('Error parsing arguments:', error.message);
+  ({ values } = parseArgs({ options, strict: false }));
+} catch (e) {
+  console.error(e.message);
   process.exit(1);
 }
 
-// Now check if the required values actually exist
-const required = ['input', 'host', 'port'];
-const missing = required.filter((arg) => !values[arg]);
-
-if (missing.length > 0) {
-  console.error(
-    `Missing required arguments: ${missing.map((m) => `--${m}`).join(', ')}`,
-  );
-  process.exit(1);
-}
-if (!values.input) {
-  console.error('Please, specify input file');
-  process.exit(1);
-}
-
-function readFile(file) {
-  let content = 'if you see this, something went wrong';
+async function processToXml() {
   try {
-    content = fs.readFileSync(file, 'utf-8').split('\n');
-  } catch (error) {
+    const rawData = await fs.readFile(values.input, 'utf-8');
+    const lines = rawData.split('\n').filter((line) => line.trim());
+
+    const builder = new XMLBuilder({
+      format: true,
+      arrayMap: { houses: 'house' },
+    });
+
+    const houses = lines.map((line) => JSON.parse(line));
+    const xmlContent = builder.build({ houses: { house: houses } });
+
+    await fs.writeFile(values.output, xmlContent);
+    console.log(`XML generated at ${values.output}`);
+  } catch (err) {
     console.error(`Cannot find input file`);
     process.exit(1);
   }
-  return content;
 }
 
-function writeFile(file, content) {
-  fs.writeFileSync(file, content.join('\n').replace(/"/g, ' '), 'utf-8');
+function startServer() {
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(req.url, `http://${values.host}:${values.port}`);
+
+    if (url.pathname === '/houses') {
+      try {
+        const xmlData = await fs.readFile(values.output, 'utf-8');
+
+        const maxPrice = parseFloat(url.searchParams.get('max_price'));
+        const isFurnished = url.searchParams.get('furnished') === 'true';
+
+        const rawData = await fs.readFile(values.input, 'utf-8');
+        const houses = rawData
+          .split('\n')
+          .filter((l) => l.trim())
+          .map((l) => JSON.parse(l))
+          .filter((h) => {
+            const priceMatch =
+              isNaN(maxPrice) || parseFloat(h.price) <= maxPrice;
+            const furnishedMatch =
+              !isFurnished || h.furnishingstatus === 'furnished';
+            return priceMatch && furnishedMatch;
+          });
+
+        const builder = new XMLBuilder({ format: true });
+        const filteredXml = builder.build({ houses: { house: houses } });
+
+        res.writeHead(200, { 'Content-Type': 'application/xml' });
+        res.end(filteredXml);
+      } catch (err) {
+        res.writeHead(500);
+        res.end('Error reading data');
+      }
+    } else {
+      res.writeHead(404);
+      res.end('Not Found');
+    }
+  });
+
+  server.listen(values.port, values.host, () => {
+    console.log(
+      `Server running at http://${values.host}:${values.port}/houses`,
+    );
+  });
 }
 
-// readFile returns an array of lines, each line is a JSON string representing a house object
-const data = readFile(values.input);
-// Example line:
-// {"price":"13300000","area":"7420","bedrooms":"4","bathrooms":"2","stories":"3","mainroad":"yes","guestroom":"no","basement":"no","hotwaterheating":"no","airconditioning":"yes","parking":"2","prefarea":"yes","furnishingstatus":"furnished"}
-const filteredData = [];
-for (const line of data) {
-  if (!line.trim()) continue;
-  const obj = JSON.parse(line);
-
-  const withinPrice = values.price
-    ? parseFloat(obj.price) <= parseFloat(values.price)
-    : true;
-  const furnishedOk = values.furnished
-    ? obj.furnishingstatus === 'furnished'
-    : true;
-
-  if (withinPrice && furnishedOk) {
-    const pushedObj = JSON.stringify(obj)
-      .replace(/[{}"]/g, '')
-      .replace(/,/g, ', ');
-    values.display && console.log(`Hose: ${data.indexOf(line) + 1}`);
-    filteredData.push(pushedObj);
-    values.display && console.log(pushedObj);
-  }
-}
-
-writeFile(
-  values.output,
-  filteredData.map((obj) => JSON.stringify(obj)),
-);
+await processToXml();
+startServer();
