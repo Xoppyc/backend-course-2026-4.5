@@ -47,25 +47,22 @@ function startServer() {
     if (url.pathname === '/houses') {
       try {
         const xmlData = await fs.readFile(values.output, 'utf-8');
-
-        const jsonObj = parser.parse(xmlData);
-        let houseList = jsonObj.houses?.house || [];
-        if (!Array.isArray(houseList)) {
-          houseList = [houseList];
-        }
         const maxPrice = parseFloat(url.searchParams.get('max_price'));
         const isFurnished = url.searchParams.get('furnished') === 'true';
-
-        const filteredHouses = houseList.filter((h) => {
-          const priceMatch = isNaN(maxPrice) || parseFloat(h.price) <= maxPrice;
-          const furnishedMatch =
-            !isFurnished || h.furnishingstatus === 'furnished';
-          return priceMatch && furnishedMatch;
-        });
-
-        const filteredXml = builder.build({
-          houses: { house: filteredHouses },
-        });
+        const rawData = await fs.readFile(values.input, 'utf-8');
+        const houses = rawData
+          .split('\n')
+          .filter((l) => l.trim())
+          .map((l) => JSON.parse(l))
+          .filter((h) => {
+            const priceMatch =
+              isNaN(maxPrice) || parseFloat(h.price) <= maxPrice;
+            const furnishedMatch =
+              !isFurnished || h.furnishingstatus === 'furnished';
+            return priceMatch && furnishedMatch;
+          });
+        const builder = new XMLBuilder({ format: true });
+        const filteredXml = builder.build({ houses: { house: houses } });
         res.writeHead(200, { 'Content-Type': 'application/xml' });
         res.end(filteredXml);
       } catch (err) {
